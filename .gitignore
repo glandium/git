@@ -260,3 +260,5 @@ Release/
 CMakeSettings.json
 /contrib/libgit-rs/target
 /contrib/libgit-sys/target
+/rust/target
+/rust/Cargo.lock

@@ -1720,7 +1720,7 @@ libgit_sources += version_def_h
 cargo = find_program('cargo', dirs: program_path, native: true, required: get_option('rust'))
 rust_option = get_option('rust').disable_auto_if(not cargo.found())
 if rust_option.allowed()
-  subdir('src')
+  subdir('rust')
   libgit_c_args += '-DWITH_RUST'
 
   if host_machine.system() == 'windows'

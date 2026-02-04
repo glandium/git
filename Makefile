@@ -935,9 +935,9 @@ TEST_SHELL_PATH = $(SHELL_PATH)
 LIB_FILE = libgit.a
 
 ifdef DEBUG
-RUST_TARGET_DIR = target/debug
+RUST_TARGET_DIR = rust/target/debug
 else
-RUST_TARGET_DIR = target/release
+RUST_TARGET_DIR = rust/target/release
 endif
 
 ifeq ($(uname_S),Windows)
@@ -1543,8 +1543,8 @@ CLAR_TEST_OBJS += $(UNIT_TEST_DIR)/unit-test.o
 
 UNIT_TEST_OBJS += $(UNIT_TEST_DIR)/test-lib.o
 
-RUST_SOURCES += src/lib.rs
-RUST_SOURCES += src/varint.rs
+RUST_SOURCES += rust/lib.rs
+RUST_SOURCES += rust/varint.rs
 
 GIT-VERSION-FILE: FORCE
 	@OLD=$$(cat $@ 2>/dev/null || :) && \
@@ -3025,8 +3025,8 @@ scalar$X: scalar.o GIT-LDFLAGS $(GITLIBS)
 $(LIB_FILE): $(LIB_OBJS)
 	$(QUIET_AR)$(RM) $@ && $(AR) $(ARFLAGS) $@ $^
 
-$(RUST_LIB): Cargo.toml $(RUST_SOURCES)
-	$(QUIET_CARGO)cargo build $(CARGO_ARGS)
+$(RUST_LIB): rust/Cargo.toml $(RUST_SOURCES)
+	$(QUIET_CARGO)cargo build --manifest-path rust/Cargo.toml $(CARGO_ARGS)
 
 .PHONY: rust
 rust: $(RUST_LIB)
