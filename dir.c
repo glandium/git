@@ -1599,7 +1599,9 @@ done:
 
 int init_sparse_checkout_patterns(struct index_state *istate)
 {
-	if (!core_apply_sparse_checkout)
+	struct repo_config_values *cfg = repo_config_values(the_repository);
+
+	if (!cfg->apply_sparse_checkout)
 		return 1;
 	if (istate->sparse_checkout_patterns)
 		return 0;
@@ -3457,6 +3459,13 @@ static int remove_dir_recurse(struct strbuf *path, int flag, int *kept_up)
 		return 0;
 	}
 
+	if (is_mount_point(path)) {
+		/* Do not descend and nuke a mount point or junction. */
+		if (kept_up)
+			*kept_up = 1;
+		return 0;
+	}
+
 	flag &= ~REMOVE_DIR_KEEP_TOPLEVEL;
 	dir = opendir(path->buf);
 	if (!dir) {
@@ -3564,15 +3573,15 @@ int get_sparse_checkout_patterns(struct pattern_list *pl)
 
 int remove_path(const char *name)
 {
-	char *slash;
+	const char *last;
 
 	if (unlink(name) && !is_missing_file_error(errno))
 		return -1;
 
-	slash = strrchr(name, '/');
-	if (slash) {
+	last = strrchr(name, '/');
+	if (last) {
 		char *dirs = xstrdup(name);
-		slash = dirs + (slash - name);
+		char *slash = dirs + (last - name);
 		do {
 			*slash = '\0';
 			if (startup_info->original_cwd &&

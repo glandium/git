@@ -385,6 +385,29 @@ process_phantom_symlink(const wchar_t *wtarget, const wchar_t *wlink)
 	wchar_t relative[MAX_LONG_PATH];
 	const wchar_t *rel;
 
+	/*
+	 * Do not follow symlinks to network shares, to avoid NTLM credential
+	 * leak from crafted repositories (e.g. \\attacker-server\share).
+	 * Since paths come in all kind of enterprising shapes and forms (in
+	 * addition to the canonical `\\host\share` form, there's also
+	 * `\??\UNC\host\share`, `\GLOBAL??\UNC\host\share` and also
+	 * `\Device\Mup\host\share`, just to name a few), we simply avoid
+	 * following every symlink target that starts with a slash.
+	 *
+	 * This also catches drive-less absolute paths, of course. These are
+	 * uncommon in practice (and also fragile because they are relative to
+	 * the current working directory's drive). The only "harm" this does
+	 * is that it now requires users to specify via the Git attributes if
+	 * they have such an uncommon symbolic link and need it to be a
+	 * directory type link.
+	 */
+	if (is_wdir_sep(wtarget[0])) {
+		warning("created file symlink '%ls' pointing to '%ls';\n"
+			"set the `symlink` gitattribute to `dir` if a "
+			"directory symlink is required", wlink, wtarget);
+		return PHANTOM_SYMLINK_DONE;
+	}
+
 	/* check that wlink is still a file symlink */
 	if ((GetFileAttributesW(wlink)
 			& (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY))
@@ -1509,6 +1532,9 @@ revert_attrs:
 size_t mingw_strftime(char *s, size_t max,
 		      const char *format, const struct tm *tm)
 {
+#ifdef _UCRT
+	size_t ret = strftime(s, max, format, tm);
+#else
 	/* a pointer to the original strftime in case we can't find the UCRT version */
 	static size_t (*fallback)(char *, size_t, const char *, const struct tm *) = strftime;
 	size_t ret;
@@ -1519,6 +1545,7 @@ size_t mingw_strftime(char *s, size_t max,
 		ret = strftime(s, max, format, tm);
 	else
 		ret = fallback(s, max, format, tm);
+#endif
 
 	if (!ret && errno == EINVAL)
 		die("invalid strftime format: '%s'", format);
@@ -2495,6 +2522,16 @@ int mingw_kill(pid_t pid, int sig)
 			CloseHandle(h);
 			return 0;
 		}
+		/*
+		 * OpenProcess returns ERROR_INVALID_PARAMETER for
+		 * non-existent PIDs. Map this to ESRCH for POSIX
+		 * compatibility with kill(pid, 0).
+		 */
+		if (GetLastError() == ERROR_INVALID_PARAMETER)
+			errno = ESRCH;
+		else
+			errno = err_win_to_posix(GetLastError());
+		return -1;
 	}
 
 	errno = EINVAL;
@@ -2938,7 +2975,7 @@ repeat:
 	if (supports_file_rename_info_ex) {
 		/*
 		 * Our minimum required Windows version is still set to Windows
-		 * Vista. We thus have to declare required infrastructure for
+		 * 8.1. We thus have to declare required infrastructure for
 		 * FileRenameInfoEx ourselves until we bump _WIN32_WINNT to
 		 * 0x0A00. Furthermore, we have to handle cases where the
 		 * FileRenameInfoEx call isn't supported yet.

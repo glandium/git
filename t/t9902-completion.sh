@@ -2596,6 +2596,7 @@ test_expect_success 'double dash "git checkout"' '
 	--ignore-skip-worktree-bits Z
 	--ignore-other-worktrees Z
 	--recurse-submodules Z
+	--auto-advance Z
 	--progress Z
 	--guess Z
 	--no-guess Z
@@ -3048,6 +3049,7 @@ test_expect_success 'git config set - variable name - __git_compute_second_level
 	submodule.sub.fetchRecurseSubmodules Z
 	submodule.sub.ignore Z
 	submodule.sub.active Z
+	submodule.sub.gitdir Z
 	EOF
 '
 

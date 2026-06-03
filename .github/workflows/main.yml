@@ -150,7 +150,7 @@ jobs:
     - uses: git-for-windows/setup-git-for-windows-sdk@v1
     - name: test
       shell: bash
-      run: . /etc/profile && ci/run-test-slice.sh ${{matrix.nr}} 10
+      run: . /etc/profile && ci/run-test-slice.sh $((${{matrix.nr}} + 1)) 10
     - name: print test failures
       if: failure() && env.FAILED_TEST_ARTIFACTS != ''
       shell: bash
@@ -240,7 +240,7 @@ jobs:
       shell: bash
       env:
         NO_SVN_TESTS: 1
-      run: . /etc/profile && ci/run-test-slice.sh ${{matrix.nr}} 10
+      run: . /etc/profile && ci/run-test-slice.sh $((${{matrix.nr}} + 1)) 10
     - name: print test failures
       if: failure() && env.FAILED_TEST_ARTIFACTS != ''
       shell: bash
@@ -300,8 +300,8 @@ jobs:
         name: windows-meson-artifacts
         path: build
     - name: Test
-      shell: pwsh
-      run: ci/run-test-slice-meson.sh build ${{matrix.nr}} 10
+      shell: bash
+      run: ci/run-test-slice-meson.sh build $((${{matrix.nr}} + 1)) 10
     - name: print test failures
       if: failure() && env.FAILED_TEST_ARTIFACTS != ''
       shell: bash
@@ -423,7 +423,9 @@ jobs:
       CI_JOB_IMAGE: ${{matrix.vector.image}}
       CUSTOM_PATH: /custom
     runs-on: ubuntu-latest
-    container: ${{matrix.vector.image}}
+    container:
+      image: ${{ matrix.vector.image }}
+      options: ${{ github.repository_visibility == 'private' && '--pids-limit 16384 --ulimit nproc=16384:16384 --ulimit nofile=32768:32768' || '' }}
     steps:
     - name: prepare libc6 for actions
       if: matrix.vector.jobname == 'linux32'
@@ -483,7 +485,7 @@ jobs:
       group: rust-analysis-${{ github.ref }}
       cancel-in-progress: ${{ needs.ci-config.outputs.skip_concurrent == 'yes' }}
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - run: ci/install-dependencies.sh
     - run: ci/run-rust-checks.sh
   sparse:
