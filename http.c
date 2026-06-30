@@ -800,6 +800,71 @@ static int has_proxy_cert_password(void)
 	return 1;
 }
 
+static const struct socks_proxy_type {
+	const char *name;
+	long curlsym;
+} socks_proxy_types[] = {
+	{ "socks", CURLPROXY_SOCKS4 },
+	{ "socks4", CURLPROXY_SOCKS4 },
+	{ "socks4a", CURLPROXY_SOCKS4A },
+	{ "socks5", CURLPROXY_SOCKS5 },
+	{ "socks5h", CURLPROXY_SOCKS5_HOSTNAME },
+};
+
+static const struct socks_proxy_type *find_socks_proxy_type(const char *protocol)
+{
+	int i;
+
+	if (!protocol)
+		return NULL;
+
+	for (i = 0; i < ARRAY_SIZE(socks_proxy_types); i++) {
+		if (!strcmp(socks_proxy_types[i].name, protocol))
+			return &socks_proxy_types[i];
+	}
+
+	return NULL;
+}
+
+static int is_socks_proxy_protocol(const char *protocol)
+{
+	return !!find_socks_proxy_type(protocol);
+}
+
+static int set_curl_proxy_type(CURL *result, const char *protocol)
+{
+	const struct socks_proxy_type *socks_proxy_type;
+
+	if (!protocol || !strcmp(protocol, "http"))
+		return 0;
+
+	socks_proxy_type = find_socks_proxy_type(protocol);
+	if (socks_proxy_type) {
+		curl_easy_setopt(result, CURLOPT_PROXYTYPE, socks_proxy_type->curlsym);
+		return 0;
+	}
+
+	if (!strcmp(protocol, "https")) {
+		curl_easy_setopt(result, CURLOPT_PROXYTYPE, (long)CURLPROXY_HTTPS);
+
+		if (http_proxy_ssl_cert)
+			curl_easy_setopt(result, CURLOPT_PROXY_SSLCERT,
+					 http_proxy_ssl_cert);
+
+		if (http_proxy_ssl_key)
+			curl_easy_setopt(result, CURLOPT_PROXY_SSLKEY,
+					 http_proxy_ssl_key);
+
+		if (has_proxy_cert_password())
+			curl_easy_setopt(result, CURLOPT_PROXY_KEYPASSWD,
+					 proxy_cert_auth.password);
+
+		return 0;
+	}
+
+	return -1;
+}
+
 /* Return 1 if redactions have been made, 0 otherwise. */
 static int redact_sensitive_header(struct strbuf *header, size_t offset)
 {
@@ -1281,30 +1346,6 @@ static CURL *get_curl_handle(void)
 	} else if (curl_http_proxy) {
 		struct strbuf proxy = STRBUF_INIT;
 
-		if (starts_with(curl_http_proxy, "socks5h"))
-			curl_easy_setopt(result,
-				CURLOPT_PROXYTYPE, (long)CURLPROXY_SOCKS5_HOSTNAME);
-		else if (starts_with(curl_http_proxy, "socks5"))
-			curl_easy_setopt(result,
-				CURLOPT_PROXYTYPE, (long)CURLPROXY_SOCKS5);
-		else if (starts_with(curl_http_proxy, "socks4a"))
-			curl_easy_setopt(result,
-				CURLOPT_PROXYTYPE, (long)CURLPROXY_SOCKS4A);
-		else if (starts_with(curl_http_proxy, "socks"))
-			curl_easy_setopt(result,
-				CURLOPT_PROXYTYPE, (long)CURLPROXY_SOCKS4);
-		else if (starts_with(curl_http_proxy, "https")) {
-			curl_easy_setopt(result, CURLOPT_PROXYTYPE, (long)CURLPROXY_HTTPS);
-
-			if (http_proxy_ssl_cert)
-				curl_easy_setopt(result, CURLOPT_PROXY_SSLCERT, http_proxy_ssl_cert);
-
-			if (http_proxy_ssl_key)
-				curl_easy_setopt(result, CURLOPT_PROXY_SSLKEY, http_proxy_ssl_key);
-
-			if (has_proxy_cert_password())
-				curl_easy_setopt(result, CURLOPT_PROXY_KEYPASSWD, proxy_cert_auth.password);
-		}
 		if (strstr(curl_http_proxy, "://"))
 			credential_from_url(&proxy_auth, curl_http_proxy);
 		else {
@@ -1313,6 +1354,10 @@ static CURL *get_curl_handle(void)
 			credential_from_url(&proxy_auth, url.buf);
 			strbuf_release(&url);
 		}
+
+		if (set_curl_proxy_type(result, proxy_auth.protocol) < 0)
+			die("Invalid proxy URL '%s': unsupported proxy scheme '%s'",
+			    curl_http_proxy, proxy_auth.protocol);
 
 		if (!proxy_auth.host)
 			die("Invalid proxy URL '%s'", curl_http_proxy);
@@ -1324,7 +1369,7 @@ static CURL *get_curl_handle(void)
 			if (ver->version_num < 0x075400)
 				die("libcurl 7.84 or later is required to support paths in proxy URLs");
 
-			if (!starts_with(proxy_auth.protocol, "socks"))
+			if (!is_socks_proxy_protocol(proxy_auth.protocol))
 				die("Invalid proxy URL '%s': only SOCKS proxies support paths",
 				    curl_http_proxy);
 
@@ -2637,18 +2682,18 @@ static int fetch_and_setup_pack_index(struct packfile_list *packs,
 
 	new_pack = parse_pack_index(the_repository, sha1, tmp_idx);
 	if (!new_pack) {
-		unlink(tmp_idx);
 		free(tmp_idx);
-
 		return -1; /* parse_pack_index() already issued error message */
 	}
 
 	ret = verify_pack_index(new_pack);
-	if (!ret)
-		close_pack_index(new_pack);
+
+	close_pack_index(new_pack);
 	free(tmp_idx);
-	if (ret)
+	if (ret) {
+		free(new_pack);
 		return -1;
+	}
 
 	packfile_list_prepend(packs, new_pack);
 	return 0;
@@ -2854,6 +2899,7 @@ static size_t fwrite_sha1_file(char *ptr, size_t eltsize, size_t nmemb,
 struct http_object_request *new_http_object_request(const char *base_url,
 						    const struct object_id *oid)
 {
+	struct odb_source_files *files = odb_source_files_downcast(the_repository->objects->sources);
 	char *hex = oid_to_hex(oid);
 	struct strbuf filename = STRBUF_INIT;
 	struct strbuf prevfile = STRBUF_INIT;
@@ -2868,7 +2914,7 @@ struct http_object_request *new_http_object_request(const char *base_url,
 	oidcpy(&freq->oid, oid);
 	freq->localfile = -1;
 
-	odb_loose_path(the_repository->objects->sources, &filename, oid);
+	odb_loose_path(files->loose, &filename, oid);
 	strbuf_addf(&freq->tmpfile, "%s.temp", filename.buf);
 
 	strbuf_addf(&prevfile, "%s.prev", filename.buf);
@@ -2994,6 +3040,7 @@ void process_http_object_request(struct http_object_request *freq)
 
 int finish_http_object_request(struct http_object_request *freq)
 {
+	struct odb_source_files *files = odb_source_files_downcast(the_repository->objects->sources);
 	struct stat st;
 	struct strbuf filename = STRBUF_INIT;
 
@@ -3020,7 +3067,7 @@ int finish_http_object_request(struct http_object_request *freq)
 		unlink_or_warn(freq->tmpfile.buf);
 		return -1;
 	}
-	odb_loose_path(the_repository->objects->sources, &filename, &freq->oid);
+	odb_loose_path(files->loose, &filename, &freq->oid);
 	freq->rename = finalize_object_file(the_repository, freq->tmpfile.buf, filename.buf);
 	strbuf_release(&filename);
 

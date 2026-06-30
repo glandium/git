@@ -397,15 +397,16 @@ create_tags () {
 }
 
 test_expect_success 'create 2,000 tags in the repo' '
+	git init --bare "$HTTPD_DOCUMENT_ROOT_PATH/many-tags.git" &&
 	(
-		cd "$HTTPD_DOCUMENT_ROOT_PATH/repo.git" &&
+		cd "$HTTPD_DOCUMENT_ROOT_PATH/many-tags.git" &&
 		create_tags 1 2000
 	)
 '
 
 test_expect_success CMDLINE_LIMIT \
 	'clone the 2,000 tag repo to check OS command line overflow' '
-	run_with_limited_cmdline git clone $HTTPD_URL/smart/repo.git too-many-refs &&
+	run_with_limited_cmdline git clone $HTTPD_URL/smart/many-tags.git too-many-refs &&
 	(
 		cd too-many-refs &&
 		git for-each-ref refs/tags >actual &&
@@ -413,15 +414,7 @@ test_expect_success CMDLINE_LIMIT \
 	)
 '
 
-# This is a temporary work-around for libcurl v8.10.0 on the macos-* runners;
-# see https://github.com/git-for-windows/git/issues/5159 for full details
-test_lazy_prereq UNBROKEN_HTTP2 '
-	test "$HTTP_PROTO" = HTTP/2 &&
-	test -z "$(brew info -q curl 2>/dev/null |
-		sed -n "/^Installed/{N;s/.*8\\.10\\.0.*/BROKEN HTTP2/p;}")"
-'
-
-test_expect_success UNBROKEN_HTTP2 'large fetch-pack requests can be sent using chunked encoding' '
+test_expect_success 'large fetch-pack requests can be sent using chunked encoding' '
 	GIT_TRACE_CURL=true git -c http.postbuffer=65536 \
 		clone --bare "$HTTPD_URL/smart/repo.git" split.git 2>err &&
 	{
@@ -489,13 +482,14 @@ test_expect_success 'test allowanysha1inwant with unreachable' '
 '
 
 test_expect_success EXPENSIVE 'http can handle enormous ref negotiation' '
+	test_when_finished "rm -f tags" &&
 	(
-		cd "$HTTPD_DOCUMENT_ROOT_PATH/repo.git" &&
+		cd "$HTTPD_DOCUMENT_ROOT_PATH/many-tags.git" &&
 		create_tags 2001 50000
 	) &&
 	git -C too-many-refs fetch -q --tags &&
 	(
-		cd "$HTTPD_DOCUMENT_ROOT_PATH/repo.git" &&
+		cd "$HTTPD_DOCUMENT_ROOT_PATH/many-tags.git" &&
 		create_tags 50001 100000
 	) &&
 	git -C too-many-refs fetch -q --tags &&

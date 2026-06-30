@@ -131,13 +131,15 @@ void free_commit_buffer_slab(struct buffer_slab *bs);
  * Associate an object buffer with the commit. The ownership of the
  * memory is handed over to the commit, and must be free()-able.
  */
-void set_commit_buffer(struct repository *r, struct commit *, void *buffer, unsigned long size);
+void set_commit_buffer(struct repository *r, struct commit *,
+		       void *buffer, size_t size);
 
 /*
  * Get any cached object buffer associated with the commit. Returns NULL
  * if none. The resulting memory should not be freed.
  */
-const void *get_cached_commit_buffer(struct repository *, const struct commit *, unsigned long *size);
+const void *get_cached_commit_buffer(struct repository *,
+				     const struct commit *, size_t *size);
 
 /*
  * Get the commit's object contents, either from cache or by reading the object
@@ -146,7 +148,7 @@ const void *get_cached_commit_buffer(struct repository *, const struct commit *,
  */
 const void *repo_get_commit_buffer(struct repository *r,
 				   const struct commit *,
-				   unsigned long *size);
+				   size_t *size);
 
 /*
  * Tell the commit subsystem that we are done with a particular commit buffer.
@@ -191,8 +193,6 @@ int commit_list_contains(struct commit *item,
 struct commit_list **commit_list_append(struct commit *commit,
 					struct commit_list **next);
 unsigned commit_list_count(const struct commit_list *l);
-struct commit_list *commit_list_insert_by_date(struct commit *item,
-				    struct commit_list **list);
 void commit_list_sort_by_date(struct commit_list **list);
 
 /* Shallow copy of the input list */
@@ -202,25 +202,6 @@ struct commit_list *commit_list_copy(const struct commit_list *list);
 struct commit_list *commit_list_reverse(struct commit_list *list);
 
 void commit_list_free(struct commit_list *list);
-
-/*
- * Deprecated compatibility functions for `struct commit_list`, to be removed
- * once Git 2.53 is released.
- */
-static inline struct commit_list *copy_commit_list(struct commit_list *l)
-{
-	return commit_list_copy(l);
-}
-
-static inline struct commit_list *reverse_commit_list(struct commit_list *l)
-{
-	return commit_list_reverse(l);
-}
-
-static inline void free_commit_list(struct commit_list *l)
-{
-	commit_list_free(l);
-}
 
 struct rev_info; /* in revision.h, it circularly uses enum cmit_fmt */
 

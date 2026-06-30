@@ -20,6 +20,7 @@
 #include "dir.h"
 #include "object-file.h"
 #include "odb.h"
+#include "odb/transaction.h"
 #include "oid-array.h"
 #include "tree.h"
 #include "commit.h"
@@ -249,7 +250,7 @@ static int ce_compare_link(const struct cache_entry *ce, size_t expected_size)
 {
 	int match = -1;
 	void *buffer;
-	unsigned long size;
+	size_t size;
 	enum object_type type;
 	struct strbuf sb = STRBUF_INIT;
 
@@ -3460,10 +3461,10 @@ int index_name_is_other(struct index_state *istate, const char *name,
 }
 
 void *read_blob_data_from_index(struct index_state *istate,
-				const char *path, unsigned long *size)
+				const char *path, size_t *size)
 {
 	int pos, len;
-	unsigned long sz;
+	size_t sz;
 	enum object_type type;
 	void *data;
 

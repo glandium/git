@@ -647,12 +647,30 @@ static inline bool strip_suffix(const char *str, const char *suffix,
 int git_open_cloexec(const char *name, int flags);
 #define git_open(name) git_open_cloexec(name, O_RDONLY)
 
-static inline size_t st_add(size_t a, size_t b)
+
+/*
+ * Help Clang; GCC generates the same instructions for both variants on
+ * x64 and aarch64.
+ */
+#ifdef __clang__
+#define st_add_overflow __builtin_add_overflow
+#else
+static inline bool st_add_overflow(size_t a, size_t b, size_t *out)
 {
 	if (unsigned_add_overflows(a, b))
+		return true;
+	*out = a + b;
+	return false;
+}
+#endif
+
+static inline size_t st_add(size_t a, size_t b)
+{
+	size_t result;
+	if (st_add_overflow(a, b, &result))
 		die("size_t overflow: %"PRIuMAX" + %"PRIuMAX,
 		    (uintmax_t)a, (uintmax_t)b);
-	return a + b;
+	return result;
 }
 #define st_add3(a,b,c)   st_add(st_add((a),(b)),(c))
 #define st_add4(a,b,c,d) st_add(st_add3((a),(b),(c)),(d))
@@ -679,15 +697,6 @@ static inline size_t st_left_shift(size_t a, unsigned shift)
 		die("size_t overflow: %"PRIuMAX" << %u",
 		    (uintmax_t)a, shift);
 	return a << shift;
-}
-
-static inline unsigned long cast_size_t_to_ulong(size_t a)
-{
-	if (a != (unsigned long)a)
-		die("object too large to read on this platform: %"
-		    PRIuMAX" is cut off to %lu",
-		    (uintmax_t)a, (unsigned long)a);
-	return (unsigned long)a;
 }
 
 static inline uint32_t cast_size_t_to_uint32_t(size_t a)
@@ -744,6 +753,12 @@ static inline uint64_t u64_add(uint64_t a, uint64_t b)
 #  define MAX_IO_SIZE MAX_IO_SIZE_DEFAULT
 # endif
 #endif
+
+/*
+ * Default buffer size for buffered I/O in index-pack, unpack-objects,
+ * and the hashfile layer in csum-file.
+ */
+#define DEFAULT_IO_BUFFER_SIZE (128 * 1024)
 
 #ifdef HAVE_ALLOCA_H
 # include <alloca.h>

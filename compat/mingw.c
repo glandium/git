@@ -554,20 +554,63 @@ static wchar_t *normalize_ntpath(wchar_t *wbuf)
 	return wbuf;
 }
 
+/*
+ * Use SetFileInformationByHandle(FileDispositionInfo) to force legacy
+ * (non-POSIX) delete semantics. On Windows 11, DeleteFileW() uses POSIX
+ * delete semantics internally, allowing deletion even with active
+ * MapViewOfFile views. This helper simulates Windows 10 behavior where
+ * deletion fails if a file mapping exists.
+ *
+ * Returns nonzero on success (like DeleteFileW), 0 on failure.
+ */
+static int legacy_delete_file(const wchar_t *wpathname)
+{
+	FILE_DISPOSITION_INFO fdi = { TRUE };
+	DWORD gle;
+	HANDLE h = CreateFileW(wpathname, DELETE,
+			       FILE_SHARE_READ | FILE_SHARE_WRITE |
+			       FILE_SHARE_DELETE,
+			       NULL, OPEN_EXISTING,
+			       FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+	if (h == INVALID_HANDLE_VALUE)
+		return 0;
+
+	if (SetFileInformationByHandle(h, FileDispositionInfo,
+				       &fdi, sizeof(fdi))) {
+		CloseHandle(h);
+		return 1;
+	}
+	gle = GetLastError();
+	CloseHandle(h);
+	SetLastError(gle);
+	return 0;
+}
+
+static int try_delete_file(const wchar_t *wpathname, int use_legacy)
+{
+	if (use_legacy)
+		return legacy_delete_file(wpathname);
+	return DeleteFileW(wpathname);
+}
+
 int mingw_unlink(const char *pathname, int handle_in_use_error)
 {
+	static int use_legacy_delete = -1;
 	int tries = 0;
 	wchar_t wpathname[MAX_LONG_PATH];
 	if (xutftowcs_long_path(wpathname, pathname) < 0)
 		return -1;
 
-	if (DeleteFileW(wpathname))
+	if (use_legacy_delete < 0)
+		use_legacy_delete = git_env_bool("GIT_TEST_LEGACY_DELETE", 0);
+
+	if (try_delete_file(wpathname, use_legacy_delete))
 		return 0;
 
 	do {
 		/* read-only files cannot be removed */
 		_wchmod(wpathname, 0666);
-		if (!_wunlink(wpathname))
+		if (try_delete_file(wpathname, use_legacy_delete))
 			return 0;
 		if (!is_file_in_use_error(GetLastError()))
 			break;
@@ -1617,14 +1660,14 @@ struct tm *localtime_r(const time_t *timep, struct tm *result)
 
 char *mingw_strbuf_realpath(struct strbuf *resolved, const char *path)
 {
-	wchar_t wpath[MAX_PATH];
+	wchar_t wpath[MAX_LONG_PATH];
 	HANDLE h;
 	DWORD ret;
 	int len;
 	const char *last_component = NULL;
 	char *append = NULL;
 
-	if (xutftowcs_path(wpath, path) < 0)
+	if (xutftowcs_long_path(wpath, path) < 0)
 		return NULL;
 
 	h = CreateFileW(wpath, 0,
@@ -3881,18 +3924,42 @@ static int acls_supported(const char *path)
 	return 0;
 }
 
+int is_valid_windows_path_element(wchar_t ch)
+{
+	// cf. https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file
+	// Windows disallows ASCII control characters 0x00–0x1F
+	if (ch < 0x1F)
+		return false;
+
+	// Windows reserved path characters
+	switch (ch) {
+	case L'<':
+	case L'>':
+	case L':':
+	case L'"':
+	case L'/':
+	case L'\\':
+	case L'|':
+	case L'?':
+	case L'*':
+		return 0;
+	default:
+		return 1;
+	}
+}
+
 int is_path_owned_by_current_sid(const char *path, struct strbuf *report)
 {
-	WCHAR wpath[MAX_PATH];
+	WCHAR wpath[MAX_LONG_PATH];
 	PSID sid = NULL;
 	PSECURITY_DESCRIPTOR descriptor = NULL;
 	DWORD err;
 
-	static wchar_t home[MAX_PATH];
+	static wchar_t home[MAX_LONG_PATH];
 
 	int result = 0;
 
-	if (xutftowcs_path(wpath, path) < 0)
+	if (xutftowcs_long_path(wpath, path) < 0)
 		return 0;
 
 	/*
@@ -3908,6 +3975,15 @@ int is_path_owned_by_current_sid(const char *path, struct strbuf *report)
 	}
 	if (!wcsicmp(wpath, home))
 		return 1;
+
+	/* Do not leak NTLM hashes, UNC paths etc. are generally problematic */
+	if (wpath[0] == L'\\' && !is_valid_windows_path_element(wpath[1])) {
+		if (report)
+			strbuf_addf(report,
+				    "'%s' may refer to a non-local directory",
+				    path);
+		return 0;
+	}
 
 	/* Get the owner SID */
 	err = GetNamedSecurityInfoW(wpath, SE_FILE_OBJECT,
